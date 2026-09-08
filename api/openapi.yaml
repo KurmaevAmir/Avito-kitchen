@@ -1,0 +1,550 @@
+openapi: 3.0.3
+info:
+  title: Avito.Кухня API
+  version: "0.2.0"
+  description: |
+    MVP API сервиса Авито.Кухня.
+
+    * **public** — эндпоинты для клиентской части (web).
+    * **partner** — эндпоинты для интеграции заведений.
+
+    ## Аутентификация
+
+    * Пользователь идентифицируется заголовком `X-User-Id` (аутентификация
+      MVP не реализуется).
+    * Заведение аутентифицируется bearer-токеном: `Authorization: Bearer <api_key>`.
+
+    ## Денежные значения
+
+    Все поля с ценами хранят и передают **целое число копеек** (наименьшая
+    единица RUB). Клиент делит на 100 при показе.
+servers:
+  - url: http://localhost:8080
+    description: Local docker-compose environment
+
+tags:
+  - name: public
+    description: Клиентский API (web)
+  - name: partner
+    description: API для заведений
+  - name: system
+    description: Служебные эндпоинты
+
+security: []
+
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      operationId: healthz
+      summary: Liveness probe
+      responses:
+        "200": { description: OK }
+
+  /readyz:
+    get:
+      tags: [system]
+      operationId: readyz
+      summary: Readiness probe (проверяет БД)
+      responses:
+        "200": { description: OK }
+        "503": { description: Not ready }
+
+  /v1/restaurants:
+    get:
+      tags: [public]
+      operationId: listRestaurants
+      summary: Список заведений
+      description: |
+        По умолчанию возвращает только открытые заведения (`is_open=true`).
+        Передайте `?is_open=false` или `?is_open=all`, чтобы получить закрытые
+        и вообще все соответственно.
+      parameters:
+        - name: is_open
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["true", "false", "all"]
+            default: "true"
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RestaurantListResponse' }
+
+  /v1/restaurants/{id}:
+    get:
+      tags: [public]
+      operationId: getRestaurant
+      summary: Карточка заведения
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Restaurant' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /v1/restaurants/{id}/menu:
+    get:
+      tags: [public]
+      operationId: getRestaurantMenu
+      summary: Меню заведения (только доступные позиции)
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuListResponse' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /v1/orders:
+    post:
+      tags: [public]
+      operationId: createOrder
+      summary: Создать заказ
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOrderRequest' }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        "200":
+          description: Уже создан (идемпотентный повтор)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "409": { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [public]
+      operationId: listUserOrders
+      summary: Список заказов пользователя
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderListResponse' }
+
+  /v1/orders/{id}:
+    get:
+      tags: [public]
+      operationId: getUserOrder
+      summary: Карточка заказа
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/OrderID'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /v1/orders/{id}/cancel:
+    post:
+      tags: [public]
+      operationId: cancelOrder
+      summary: Отменить заказ (доступно, пока created/accepted)
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/OrderID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, description: Причина отмены }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /v1/orders/{id}/history:
+    get:
+      tags: [public]
+      operationId: getOrderHistory
+      summary: История смен статуса заказа
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/OrderID'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [status, changed_at]
+                      properties:
+                        status: { $ref: '#/components/schemas/OrderStatus' }
+                        comment: { type: string }
+                        changed_at: { type: string, format: date-time }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /v1/partner/menu:
+    post:
+      tags: [partner]
+      operationId: partnerAddMenuItem
+      summary: Добавить позицию в меню
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertMenuItemRequest' }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuItem' }
+    get:
+      tags: [partner]
+      operationId: partnerListMenu
+      summary: Список всех позиций меню (включая недоступные, без удалённых)
+      security: [ { bearerAuth: [] } ]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuListResponse' }
+
+  /v1/partner/menu/{item_id}:
+    patch:
+      tags: [partner]
+      operationId: partnerPatchMenuItem
+      summary: Обновить позицию меню
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PatchMenuItemRequest' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuItem' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [partner]
+      operationId: partnerDeleteMenuItem
+      summary: Мягко удалить позицию (soft-delete)
+      description: |
+        Помечает позицию как удалённую (`deleted_at`). Не физическое удаление:
+        связанные `order_items` продолжают ссылаться, но позиция скрыта из
+        публичного и партнёрского меню. Повторный DELETE идемпотентен.
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: No Content }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /v1/partner/orders:
+    get:
+      tags: [partner]
+      operationId: partnerListOrders
+      summary: Список заказов заведения
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderListResponse' }
+
+  /v1/partner/orders/{id}/status:
+    patch:
+      tags: [partner]
+      operationId: partnerUpdateOrderStatus
+      summary: Сменить статус заказа
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateOrderStatusRequest' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        API-ключ партнёра, выданный ему при подключении.
+        Пример: `Authorization: Bearer demo-restaurant-key`.
+
+  parameters:
+    UserID:
+      name: X-User-Id
+      in: header
+      required: true
+      schema: { type: string, minLength: 1 }
+    RestaurantID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: Требуется аутентификация партнёра (bearer-токен)
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+          example: 'Bearer realm="partner"'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Ресурс не найден
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: Конфликт состояния
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string, example: validation_failed }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+
+    OrderStatus:
+      type: string
+      enum: [created, accepted, cooking, ready, delivered, cancelled]
+
+    Restaurant:
+      type: object
+      required: [id, name, address, is_open, created_at]
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string }
+        description: { type: string }
+        address:     { type: string }
+        is_open:     { type: boolean }
+        created_at:  { type: string, format: date-time }
+
+    RestaurantListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Restaurant' }
+
+    MenuItem:
+      type: object
+      required: [id, restaurant_id, name, price, available, created_at]
+      properties:
+        id:            { type: string, format: uuid }
+        restaurant_id: { type: string, format: uuid }
+        name:          { type: string }
+        description:   { type: string }
+        price:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Цена в копейках (наименьшая единица RUB).
+          example: 42000
+        weight_grams:
+          type: integer
+          minimum: 0
+          description: Вес порции в граммах (nullable для позиций, где неприменимо).
+          nullable: true
+        composition:
+          type: string
+          description: Состав позиции (ингредиенты одной строкой).
+        allergens:
+          type: array
+          description: Аллергены (SN-коды или общие названия).
+          items: { type: string }
+        available:     { type: boolean }
+        created_at:    { type: string, format: date-time }
+
+    MenuListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MenuItem' }
+
+    UpsertMenuItemRequest:
+      type: object
+      required: [name, price]
+      properties:
+        name:         { type: string, minLength: 1 }
+        description:  { type: string }
+        price:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Цена в копейках.
+        weight_grams:
+          type: integer
+          minimum: 0
+          nullable: true
+        composition:  { type: string }
+        allergens:
+          type: array
+          items: { type: string }
+        available:    { type: boolean, default: true }
+
+    PatchMenuItemRequest:
+      type: object
+      properties:
+        price:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Цена в копейках.
+        available:   { type: boolean }
+
+    CreateOrderRequestItem:
+      type: object
+      required: [menu_item_id, quantity]
+      properties:
+        menu_item_id: { type: string, format: uuid }
+        quantity:     { type: integer, minimum: 1, maximum: 50 }
+
+    CreateOrderRequest:
+      type: object
+      required: [restaurant_id, items, delivery_address]
+      properties:
+        restaurant_id:    { type: string, format: uuid }
+        delivery_address: { type: string, minLength: 1 }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/CreateOrderRequestItem' }
+
+    OrderItem:
+      type: object
+      required: [id, menu_item_id, name, price, quantity]
+      properties:
+        id:           { type: string, format: uuid }
+        menu_item_id: { type: string, format: uuid }
+        name:         { type: string }
+        price:
+          type: integer
+          format: int64
+          description: Цена одной единицы в копейках (snapshot на момент заказа).
+        quantity:     { type: integer }
+
+    Order:
+      type: object
+      required: [id, user_id, restaurant_id, status, total_price, delivery_address, created_at, updated_at, items]
+      properties:
+        id:               { type: string, format: uuid }
+        user_id:          { type: string }
+        restaurant_id:    { type: string, format: uuid }
+        status:           { $ref: '#/components/schemas/OrderStatus' }
+        total_price:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Итоговая сумма заказа в копейках (snapshot).
+        delivery_address: { type: string }
+        created_at:       { type: string, format: date-time }
+        updated_at:       { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+
+    OrderListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Order' }
+
+    UpdateOrderStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [accepted, cooking, ready, delivered, cancelled]
+        comment: { type: string }

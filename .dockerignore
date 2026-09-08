@@ -1,0 +1,8 @@
+bin/
+docs/
+.git
+.idea
+
+.vscode
+*.md
+!api/openapi.yaml

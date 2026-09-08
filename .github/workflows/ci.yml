@@ -1,0 +1,38 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: unit + handler tests (race + coverage)
+        run: |
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out | tail -1
+
+      - name: integration tests (testcontainers)
+        run: go test -tags=integration -race -count=1 ./internal/repository/
+
+      - name: golangci-lint v2
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.5.0
+
+      - name: openapi codegen up-to-date
+        run: |
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+          oapi-codegen -config internal/api/oapi.yaml api/openapi.yaml
+          git diff --exit-code internal/api/gen/oapi.gen.go

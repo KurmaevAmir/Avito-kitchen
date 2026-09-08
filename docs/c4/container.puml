@@ -1,0 +1,28 @@
+@startuml c4-container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/v2.10.0/C4_Container.puml
+
+title Avito.Кухня — Containers (C4 L2)
+
+Person(user, "Покупатель")
+Person(operator, "Оператор заведения")
+
+System_Boundary(sys, "Avito.Кухня") {
+  Container(webClient, "Web-клиент",        "Any SPA",       "Витрина, корзина, статусы заказа (реализуется отдельно)")
+  Container(api,       "kitchen-api",       "Go 1.25 / Gin", "HTTP JSON API. Public + Partner. Транзакции, идемпотентность, кэш витрины, публикация событий")
+  ContainerDb(db,      "PostgreSQL 16",     "SQL",           "restaurants, menu_items, orders, order_items, order_status_history")
+  ContainerDb(cache,   "Redis 7",           "In-memory KV",  "Кэш витрины и меню (TTL 30–60 с) + инвалидация по mutation-эндпоинтам")
+  Container(bus,       "RabbitMQ",          "AMQP topic",    "Шина событий: orders.created, orders.status.<status>")
+  Container(sample,    "restaurant-sample", "Go 1.25",       "Демо-заведение. Слушает шину, продвигает заказы через partner API")
+  Container(migrator,  "goose migrator",    "One-shot job",  "Прогоняет миграции при старте compose-стека")
+}
+
+Rel(user, webClient,       "Использует", "web")
+Rel(operator, sample,      "Настраивает через ENV / логи", "shell")
+Rel(webClient, api,        "REST /v1/*",         "HTTPS")
+Rel(sample, api,           "REST /v1/partner/*", "HTTPS")
+Rel(api, db,               "pgx pool",           "SQL")
+Rel(api, cache,            "GET / SET / DEL",    "RESP")
+Rel(api, bus,              "publish events",     "AMQP")
+Rel(bus, sample,           "subscribe events",   "AMQP")
+Rel(migrator, db,          "DDL / seed",         "SQL")
+@enduml

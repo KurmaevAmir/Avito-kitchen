@@ -1,0 +1,75 @@
+@startuml erd
+title Avito.Кухня — схема БД
+
+hide circle
+skinparam linetype ortho
+
+entity restaurants {
+  * id : uuid <<PK>>
+  --
+  * name : text
+    description : text
+  * address : text
+  * is_open : bool
+  * api_key : text
+  * created_at : timestamptz
+    deleted_at : timestamptz  '' soft-delete
+  --
+  UNIQUE INDEX (api_key) WHERE deleted_at IS NULL
+}
+
+entity menu_items {
+  * id : uuid <<PK>>
+  --
+  * restaurant_id : uuid <<FK>>
+  * name : text
+    description : text
+  * price : bigint            '' в копейках
+    weight_grams : int
+    composition : text
+    allergens : text[]
+  * available : bool           '' стоп-лист (не путать с deleted_at)
+  * created_at : timestamptz
+    deleted_at : timestamptz   '' soft-delete
+}
+
+entity orders {
+  * id : uuid <<PK>>
+  --
+  * user_id : text
+  * restaurant_id : uuid <<FK>>
+  * status : order_status (enum)
+  * total_price : bigint       '' в копейках
+  * delivery_address : text
+  * idempotency_key : text
+  * created_at : timestamptz
+  * updated_at : timestamptz
+  --
+  UNIQUE(user_id, idempotency_key)
+}
+
+entity order_items {
+  * id : uuid <<PK>>
+  --
+  * order_id : uuid <<FK>>
+  * menu_item_id : uuid <<FK>>
+  * name : text                '' snapshot
+  * price : bigint             '' snapshot, копейки
+  * quantity : int
+}
+
+entity order_status_history {
+  * id : bigserial <<PK>>
+  --
+  * order_id : uuid <<FK>>
+  * status : order_status
+    comment : text
+  * changed_at : timestamptz
+}
+
+restaurants ||--o{ menu_items
+restaurants ||--o{ orders
+orders ||--o{ order_items
+menu_items ||--o{ order_items
+orders ||--o{ order_status_history
+@enduml

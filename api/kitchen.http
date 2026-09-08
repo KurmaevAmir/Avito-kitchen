@@ -1,0 +1,307 @@
+### Avito.Кухня — HTTP client collection (JetBrains / VS Code REST Client format)
+###
+### Как запускать:
+###   1. IntelliJ / GoLand / WebStorm: открыть файл, выбрать окружение "local"
+###      в правом верхнем углу редактора, нажимать ▶ рядом с каждым запросом.
+###   2. VS Code с расширением "REST Client": нажать "Send Request" над запросом.
+###      (Плагин не читает http-client.env.json, задайте переменные вручную:
+###       @baseUrl = http://localhost:8080  и т.п.)
+###   3. CLI: `ijhttp -e local -v api/http-client.env.json api/kitchen.http`
+###      (см. https://www.jetbrains.com/help/idea/http-client-cli.html)
+###
+### Все переменные вида {{baseUrl}}, {{userId}}, {{restaurantKey}},
+### {{restaurantId}} берутся из api/http-client.env.json (окружение "local").
+###
+### Партнёрская авторизация: `Authorization: Bearer <api_key>`.
+
+### 1. Liveness / readiness
+GET {{baseUrl}}/healthz
+Accept: application/json
+
+> {%
+    client.test("healthz returns 200", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.status === "ok", "expected {status:ok}");
+    });
+%}
+
+### 2. Readiness (DB reachable)
+GET {{baseUrl}}/readyz
+Accept: application/json
+
+> {%
+    client.test("readyz returns 200", function() {
+        client.assert(response.status === 200, "expected 200");
+    });
+%}
+
+### 3. Public — список открытых заведений (дефолт is_open=true)
+GET {{baseUrl}}/v1/restaurants
+Accept: application/json
+
+> {%
+    client.test("list not empty", function() {
+        client.assert(response.status === 200, "expected 200");
+        client.assert(response.body.items.length > 0, "expected at least one seeded restaurant");
+        client.global.set("pickedRestaurantId", response.body.items[0].id);
+    });
+%}
+
+### 3b. Public — список ВСЕХ заведений (открытые + закрытые), тоже 1 в seed
+GET {{baseUrl}}/v1/restaurants?is_open=all
+Accept: application/json
+
+> {%
+    client.test("list?is_open=all returns >= same count", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.items.length >= 1);
+    });
+%}
+
+### 4. Public — карточка заведения
+GET {{baseUrl}}/v1/restaurants/{{pickedRestaurantId}}
+Accept: application/json
+
+> {%
+    client.test("restaurant is open", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.is_open === true, "restaurant must be open in demo");
+    });
+%}
+
+### 5. Public — меню (только доступные позиции)
+GET {{baseUrl}}/v1/restaurants/{{pickedRestaurantId}}/menu
+Accept: application/json
+
+> {%
+    client.test("menu has at least 2 available items with new fields", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.items.length >= 2, "expected >=2 menu items");
+        var first = response.body.items[0];
+        client.assert(typeof first.price === "number", "price must be a number (kopeks)");
+        client.assert(Array.isArray(first.allergens), "allergens must be an array");
+        client.global.set("menuItem1", first.id);
+        client.global.set("menuItem2", response.body.items[1].id);
+        client.global.set("menuItem1Price", first.price);
+        client.global.set("menuItem2Price", response.body.items[1].price);
+    });
+%}
+
+### 6. Public — создание заказа (идемпотентно по Idempotency-Key)
+POST {{baseUrl}}/v1/orders
+Content-Type: application/json
+X-User-Id: {{userId}}
+Idempotency-Key: kitchen-http-demo-001
+
+{
+  "restaurant_id": "{{pickedRestaurantId}}",
+  "delivery_address": "Москва, Тверская 1",
+  "items": [
+    { "menu_item_id": "{{menuItem1}}", "quantity": 1 },
+    { "menu_item_id": "{{menuItem2}}", "quantity": 2 }
+  ]
+}
+
+> {%
+    client.test("order created — total_price and snapshot", function() {
+        client.assert(response.status === 201 || response.status === 200,
+            "expected 201 (first send) or 200 (idempotent replay)");
+        client.global.set("orderId", response.body.id);
+
+        var expected = parseInt(client.global.get("menuItem1Price")) +
+                       2 * parseInt(client.global.get("menuItem2Price"));
+        client.assert(response.body.total_price === expected,
+            "total_price mismatch: got " + response.body.total_price + ", expected " + expected);
+        client.assert(typeof response.body.items[0].price === "number",
+            "order_item.price must be number (kopeks snapshot)");
+    });
+%}
+
+### 7. Public — идемпотентный повтор того же заказа
+POST {{baseUrl}}/v1/orders
+Content-Type: application/json
+X-User-Id: {{userId}}
+Idempotency-Key: kitchen-http-demo-001
+
+{
+  "restaurant_id": "{{pickedRestaurantId}}",
+  "delivery_address": "Москва, Тверская 1",
+  "items": [
+    { "menu_item_id": "{{menuItem1}}", "quantity": 1 },
+    { "menu_item_id": "{{menuItem2}}", "quantity": 2 }
+  ]
+}
+
+> {%
+    client.test("idempotent replay returns same order", function() {
+        client.assert(response.status === 200, "replay must return 200, not 201");
+        client.assert(response.body.id === client.global.get("orderId"),
+            "expected same order id on idempotent replay");
+    });
+%}
+
+### 8. Public — карточка своего заказа
+GET {{baseUrl}}/v1/orders/{{orderId}}
+X-User-Id: {{userId}}
+
+> {%
+    client.test("order fetched", function() {
+        client.assert(response.status === 200);
+    });
+%}
+
+### 9. Public — список моих заказов
+GET {{baseUrl}}/v1/orders?limit=10
+X-User-Id: {{userId}}
+
+> {%
+    client.test("user has at least 1 order", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.items.length >= 1);
+    });
+%}
+
+### -------------------------------------------------------------------- ###
+### PARTNER — все запросы требуют Authorization: Bearer <api_key>.
+### -------------------------------------------------------------------- ###
+
+### 10. Partner — всё меню (включая недоступные, кроме soft-deleted)
+GET {{baseUrl}}/v1/partner/menu
+Authorization: Bearer {{restaurantKey}}
+
+> {%
+    client.test("partner sees all menu items (including unavailable)", function() {
+        client.assert(response.status === 200);
+        var hasUnavailable = response.body.items.some(function(x) { return x.available === false; });
+        client.assert(hasUnavailable, "partner must see unavailable items");
+    });
+%}
+
+### 11. Partner — добавить новую позицию (со всеми новыми полями)
+POST {{baseUrl}}/v1/partner/menu
+Content-Type: application/json
+Authorization: Bearer {{restaurantKey}}
+
+{
+  "name": "Плов (http-smoke)",
+  "description": "Добавлено из kitchen.http smoke",
+  "price": 48000,
+  "weight_grams": 320,
+  "composition": "Рис, баранина, морковь, лук, специи",
+  "allergens": [],
+  "available": true
+}
+
+> {%
+    client.test("menu item created with composition fields", function() {
+        client.assert(response.status === 201);
+        client.assert(response.body.price === 48000, "price must round-trip");
+        client.assert(response.body.weight_grams === 320, "weight_grams must round-trip");
+        client.assert(Array.isArray(response.body.allergens));
+        client.global.set("newMenuItemId", response.body.id);
+    });
+%}
+
+### 12. Partner — обновить цену/доступность
+PATCH {{baseUrl}}/v1/partner/menu/{{newMenuItemId}}
+Content-Type: application/json
+Authorization: Bearer {{restaurantKey}}
+
+{
+  "price": 52000,
+  "available": false
+}
+
+> {%
+    client.test("menu item patched", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.price === 52000);
+        client.assert(response.body.available === false);
+    });
+%}
+
+### 13. Partner — DELETE (soft-delete) новой позиции
+DELETE {{baseUrl}}/v1/partner/menu/{{newMenuItemId}}
+Authorization: Bearer {{restaurantKey}}
+
+> {%
+    client.test("soft-delete returns 204", function() {
+        client.assert(response.status === 204, "expected 204 No Content");
+    });
+%}
+
+### 13b. Partner — повторный DELETE идемпотентен (тоже 204)
+DELETE {{baseUrl}}/v1/partner/menu/{{newMenuItemId}}
+Authorization: Bearer {{restaurantKey}}
+
+> {%
+    client.test("idempotent DELETE", function() {
+        client.assert(response.status === 204, "repeated DELETE must also return 204");
+    });
+%}
+
+### 13c. Partner — после DELETE позиции нет в списке
+GET {{baseUrl}}/v1/partner/menu
+Authorization: Bearer {{restaurantKey}}
+
+> {%
+    client.test("soft-deleted item hidden from menu list", function() {
+        client.assert(response.status === 200);
+        var deletedId = client.global.get("newMenuItemId");
+        var stillPresent = response.body.items.some(function(x) { return x.id === deletedId; });
+        client.assert(!stillPresent, "deleted item must not appear in the menu list");
+    });
+%}
+
+### 14. Partner — список заказов заведения
+GET {{baseUrl}}/v1/partner/orders?limit=20
+Authorization: Bearer {{restaurantKey}}
+
+> {%
+    client.test("partner sees orders", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.items.length >= 1);
+    });
+%}
+
+### 15. Partner — попытка недопустимого перехода: → created.
+### Ожидаем 400 (валидация в сервисе) или 409 (state-machine),
+### оба варианта означают, что инвариант сработал.
+PATCH {{baseUrl}}/v1/partner/orders/{{orderId}}/status
+Content-Type: application/json
+Authorization: Bearer {{restaurantKey}}
+
+{
+  "status": "created"
+}
+
+> {%
+    client.test("cannot go back to 'created'", function() {
+        client.assert(response.status === 400 || response.status === 409,
+            "expected 400/409 for illegal transition back to 'created'");
+    });
+%}
+
+### 16. Partner — заведомо неверный bearer → 401 + WWW-Authenticate.
+GET {{baseUrl}}/v1/partner/menu
+Authorization: Bearer totally-wrong-key
+
+> {%
+    client.test("bad key → 401 unauthorized", function() {
+        client.assert(response.status === 401, "unknown key must be 401");
+        client.assert(response.body.code === "unauthorized");
+        var wa = response.headers.valueOf("WWW-Authenticate");
+        client.assert(wa !== null && wa.indexOf("Bearer") === 0,
+            "WWW-Authenticate: Bearer must be present");
+    });
+%}
+
+### 16b. Partner — пустой Authorization → 401.
+GET {{baseUrl}}/v1/partner/menu
+
+> {%
+    client.test("missing Authorization → 401", function() {
+        client.assert(response.status === 401, "missing Authorization must be 401");
+        client.assert(response.body.code === "unauthorized");
+    });
+%}

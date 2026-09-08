@@ -1,0 +1,12 @@
+# Конфиг для oapi-codegen. Генерирует только JSON-типы (schemas) и
+# embed самой спеки, без роутера/интерфейса сервера — так мы получаем
+# гарантированную типизацию request/response DTO, не меняя роутинг.
+package: gen
+output: internal/api/gen/oapi.gen.go
+generate:
+  models: true
+  embedded-spec: true # embedded spec нужен для kin-openapi request-validator
+output-options:
+  skip-prune: true
+compatibility:
+  always-prefix-enum-values: false

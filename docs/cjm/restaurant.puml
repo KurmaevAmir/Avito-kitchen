@@ -1,0 +1,71 @@
+@startuml cjm-restaurant
+title CJM — заведение (партнёр) в Авито.Кухня
+
+skinparam defaultFontName Helvetica
+skinparam roundcorner 8
+skinparam shadowing false
+
+|Подключение|
+start
+:Получает bearer-токен
+(seed / админ-процедура вне MVP);
+:Проверяет доступ:
+GET /v1/partner/menu
+Authorization: Bearer <token>;
+
+|Управление меню (независимые сценарии)|
+split
+  :[Добавление позиции]
+  POST /v1/partner/menu
+  {name, description, price,
+   weight_grams, composition, allergens};
+  note right
+    Разовое действие
+    при появлении новой позиции.
+  end note
+split again
+  :[Редактирование позиции]
+  PATCH /v1/partner/menu/{item_id}
+  {price?, available?};
+  note right
+    Регулярный сценарий:
+    смена цены, стоп-лист.
+  end note
+split again
+  :[Мягкое удаление позиции]
+  DELETE /v1/partner/menu/{item_id};
+  note right
+    Позиция помечается deleted_at,
+    но остаётся в истории заказов.
+    Идемпотентно (повторный DELETE = 204).
+  end note
+end split
+
+|Работа с заказами (event-driven или polling)|
+repeat
+  if (RabbitMQ подключён?) then (да)
+    :Подписан на очередь orders.*;
+    :Событие orders.created
+    → PATCH → accepted;
+    :Событие orders.status.accepted
+    → PATCH → cooking;
+    :Событие orders.status.cooking
+    → sleep → PATCH → ready;
+    :Событие orders.status.ready
+    → PATCH → delivered;
+  else (нет — fallback)
+    :Поллит GET /v1/partner/orders
+    → PATCH статуса по одному шагу за тик;
+  endif
+repeat while (сервис работает?) is (да)
+->нет;
+
+|Аномалии|
+:Позиция закончилась —
+PATCH /partner/menu/{id} available=false;
+:Позиция ушла из меню навсегда —
+DELETE /partner/menu/{id};
+:Заказ невозможен —
+PATCH /partner/orders/{id}/status cancelled;
+stop
+@enduml

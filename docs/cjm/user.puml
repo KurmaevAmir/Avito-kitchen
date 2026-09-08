@@ -1,0 +1,61 @@
+@startuml cjm-user
+title CJM — пользователь Авито.Кухня
+
+skinparam defaultFontName Helvetica
+skinparam roundcorner 8
+skinparam shadowing false
+
+|Открытие|
+start
+:Заходит на витрину Авито.Кухня;
+:GET /v1/restaurants
+(по умолчанию только открытые:
+is_open=true);
+
+|Выбор заведения|
+:Открывает карточку заведения;
+:GET /v1/restaurants/{id};
+:GET /v1/restaurants/{id}/menu
+(меню, только available и не удалённые);
+note right
+  Клиент видит новые поля:
+  - price (в копейках, делит на 100)
+  - weight_grams, composition, allergens
+  Возможные боли:
+  - позиция закончилась (available=false)
+  - позиция удалена (deleted_at is not null)
+  - заведение закрыто (is_open=false)
+end note
+
+|Формирование заказа|
+:Добавляет позиции в корзину;
+:Проверяет итоговую сумму
+(snapshot цен придёт с сервера);
+:Вводит адрес доставки;
+
+|Оформление|
+:POST /v1/orders
++ X-User-Id, Idempotency-Key;
+if (все позиции доступны и принадлежат заведению?) then (да)
+  :201 Created — order.id, total_price;
+  note right
+    Публикуется событие orders.created,
+    заведение реагирует автоматически.
+  end note
+else (нет)
+  :409 Conflict — item_unavailable
+   или mismatched_restaurant или restaurant_closed;
+  stop
+endif
+
+|Ожидание|
+:Периодически опрашивает
+GET /v1/orders/{id};
+:Наблюдает статусы:
+created → accepted → cooking
+     → ready → delivered;
+
+|Готово|
+:Заказ доставлен, оценивает опыт;
+stop
+@enduml

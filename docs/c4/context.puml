@@ -1,0 +1,17 @@
+@startuml c4-context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/v2.10.0/C4_Context.puml
+
+title Avito.Кухня — System Context (C4 L1)
+
+Person(user,      "Покупатель",     "Заказывает еду через web-клиент Авито.Кухня")
+Person(operator,  "Оператор заведения", "Отслеживает заказы и меню заведения (в MVP — через API/скрипт)")
+
+System(kitchen,     "Avito.Кухня API", "Backend MVP: витрина, заказы, интеграция заведений, кэш, шина событий")
+System_Ext(client,  "Web-клиент",       "Реализуется отдельно; ходит в public API")
+System_Ext(partner, "Restaurant sample","Демо-сервис заведения; подписан на шину и ходит в partner API")
+
+Rel(user,     client,  "Просматривает витрину, оформляет заказ")
+Rel(client,   kitchen, "REST / JSON", "HTTPS")
+Rel(operator, partner, "Настраивает меню, обрабатывает заказы")
+Rel(partner,  kitchen, "REST / JSON (partner API) + AMQP subscribe", "HTTPS + AMQP")
+@enduml

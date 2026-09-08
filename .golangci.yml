@@ -1,0 +1,62 @@
+version: "2"
+
+run:
+  timeout: 3m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck # включает и бывший gosimple, и стандартные проверки
+    - unused
+    - misspell
+    - revive
+    - gocritic
+    - gosec
+    - unconvert
+    - unparam
+    - bodyclose
+    - sqlclosecheck
+    - nakedret
+    - prealloc
+
+  settings:
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+    gosec:
+      excludes:
+        - G404 # weak RNG не критично
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+          arguments: [disableStutteringCheck]
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - unparam
+      - path: internal/api/gen/
+        linters:
+          - govet
+          - unused
+          - staticcheck
+          - revive
+          - gocritic
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

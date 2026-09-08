@@ -1,0 +1,42 @@
+@startuml c4-component
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/v2.10.0/C4_Component.puml
+
+title kitchen-api — Components (C4 L3)
+
+Container(webClient, "Web-клиент", "Any SPA")
+Container(sample, "restaurant-sample", "Go")
+ContainerDb(db, "PostgreSQL", "SQL")
+ContainerDb(cache, "Redis", "KV")
+Container(bus, "RabbitMQ", "AMQP")
+
+Container_Boundary(api, "kitchen-api (Go)") {
+  Component(router,     "Gin Engine",             "gin-gonic",         "Маршрутизация + middleware (Recovery, RequestID, structured logger)")
+  Component(genTypes,   "OpenAPI DTO",            "internal/api/gen",  "Сгенерированные oapi-codegen'ом типы запросов/ответов")
+  Component(publicH,    "Public Handlers",        "http",              "restaurants / menu / orders — вызывают Service")
+  Component(partnerH,   "Partner Handlers",       "http",              "menu upsert, orders list, status update — вызывают Service")
+  Component(partnerMW,  "Partner Auth Middleware","http",              "Проверяет Authorization: Bearer <api_key>, кладёт restaurant в ctx")
+  Component(service,    "Service Layer",          "internal/service",  "Валидация, кэш-стратегия, публикация событий, оркестрация")
+  Component(cachePkg,   "Cache adapter",          "internal/cache",    "go-redis + JSON-сериализация; fail-open при недоступности Redis")
+  Component(eventsPkg,  "Events publisher",       "internal/events",   "amqp091-go: topic-exchange, JSON-payload, retry на подключении")
+  Component(repo,       "Repository (pgx)",       "internal/repository", "Транзакции, идемпотентность, снимок меню в order_items")
+  Component(domain,     "Domain",                 "internal/domain",   "Модели + state machine статусов заказа")
+}
+
+Rel(webClient, router, "REST /v1/*", "HTTPS")
+Rel(sample,    router, "REST /v1/partner/*", "HTTPS")
+Rel(router, publicH,   "route")
+Rel(router, partnerMW, "route (partner)")
+Rel(partnerMW, partnerH, "authorized ctx")
+Rel(publicH,  genTypes, "bind req / build resp")
+Rel(partnerH, genTypes, "bind req / build resp")
+Rel(publicH,  service, "invoke")
+Rel(partnerH, service, "invoke")
+Rel(service,  cachePkg, "read-through + инвалидация")
+Rel(service,  eventsPkg, "publish OrderCreated / OrderStatusChanged")
+Rel(service,  repo,    "invoke")
+Rel(service,  domain,  "uses")
+Rel(repo,     domain,  "returns")
+Rel(cachePkg, cache,   "RESP")
+Rel(eventsPkg, bus,    "AMQP publish")
+Rel(repo,     db,      "SQL (pgx pool + tx)")
+@enduml
